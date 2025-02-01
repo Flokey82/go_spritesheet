@@ -332,3 +332,98 @@ func blendColors(colorA, colorB color.Color, intensity float64) color.Color {
 
 	return color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)}
 }
+
+// ApplyCorrosion generates a corrosion effect for the given layer.
+// This will create splotches of a different color on the layer (wherever pixels are set)
+// using cellular automata to grow the splotches from seedpoints selected at random.
+// TODO:
+// - Avoid eating into outlines.
+// - We could 'chip away' at the corners of the sprites to make them look more worn.
+func ApplyCorrosion(layer image.Image, color color.Color, numIterations, numSeeds int) *image.RGBA {
+	bounds := layer.Bounds()
+
+	// We will use two bool slices to represent the corrosion layer at two states.
+	corrosionCur := make([]bool, bounds.Dx()*bounds.Dy())
+	corrosionPrev := make([]bool, bounds.Dx()*bounds.Dy())
+
+	// Iterate over the pixels in the original layer using rand.Perm, and set
+	// the seed points for the corrosion layer if the pixel is set in the original layer.
+	for _, i := range rand.Perm(bounds.Dx() * bounds.Dy()) {
+		x := i % bounds.Dx()
+		y := i / bounds.Dx()
+
+		_, _, _, a := layer.At(x, y).RGBA()
+		if a != 0 {
+			corrosionCur[i] = true
+			numSeeds--
+		}
+
+		if numSeeds == 0 {
+			break
+		}
+	}
+
+	// Iterate over the number of iterations
+	for i := 0; i < numIterations; i++ {
+		// Iterate over all cells in the layer
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				// If the current cell is not set in the original layer, skip it.
+				// If there's nothing to corrode, we can skip the cell.
+				_, _, _, a := layer.At(x, y).RGBA()
+				if a == 0 {
+					continue
+				}
+
+				// Check if the current cell is set in the previous state.
+				// If so, copy it to the current state.
+				index := y*bounds.Dx() + x
+				if corrosionPrev[index] {
+					corrosionCur[index] = true
+					continue
+				}
+
+				// Check if any of the neighbors are set in the previous state.
+				// The higher the number, the more likely the current cell will be set.
+				var numNeighbors int
+				for i := -1; i <= 1; i++ {
+					if x+i < bounds.Min.X || x+i >= bounds.Max.X {
+						continue
+					}
+					for j := -1; j <= 1; j++ {
+						if y+j < bounds.Min.Y || y+j >= bounds.Max.Y {
+							continue
+						}
+
+						if corrosionPrev[(y+j)*bounds.Dx()+x+i] {
+							numNeighbors++
+						}
+					}
+				}
+
+				// Set the current cell based on the number of neighbors
+				if rand.Intn(8) < numNeighbors {
+					corrosionCur[index] = true
+				}
+			}
+		}
+
+		// Swap the current and previous corrosion states
+		corrosionCur, corrosionPrev = corrosionPrev, corrosionCur
+	}
+
+	// Create a new RGBA image for the corrosion layer
+	corrosionLayer := image.NewRGBA(bounds)
+
+	// Iterate over all cells in the layer and set the color based on the corrosion state
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			index := y*bounds.Dx() + x
+			if corrosionPrev[index] {
+				corrosionLayer.Set(x, y, color)
+			}
+		}
+	}
+
+	return corrosionLayer
+}
