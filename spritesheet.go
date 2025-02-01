@@ -109,38 +109,46 @@ func interpolateColor(colorA, colorB color.Color, percentage float64) color.Colo
 	}
 }
 
-// ApplyFlameEffect generates a flame effect for the given layer.
-func ApplyFlameEffect(layer image.Image, colorA, colorB color.Color) *image.RGBA {
+const (
+	DirectionUp   = 1
+	DirectionDown = -1
+)
+
+// applyEffect applies a generic effect (flame or drip) to the given layer.
+func applyEffect(layer image.Image, colorA, colorB color.Color, numColors int, direction int) *image.RGBA {
+	const minNeighbors = 3
+
 	bounds := layer.Bounds()
-	flameLayer := image.NewRGBA(bounds)
+	effectLayer := image.NewRGBA(bounds)
 
 	// Build a gradient index for all the colors we want to use.
-	const numColors = 10
 	gradient := make([]color.Color, numColors)
 	for i := 0; i < numColors; i++ {
 		percentage := float64(i) / float64(numColors-1)
 		gradient[i] = interpolateColor(colorA, colorB, percentage)
 	}
-	// We iterate over the pixels bottom to top and look at the pixel below.
-	// If the pixel below is set on the original layer, we set the current pixel on the flame layer
-	// to the first color in the gradient.
-	// Else if the pixel below is set on the flame layer, we set the current pixel to the next color in the gradient.
-	for y := bounds.Max.Y - 1; y >= bounds.Min.Y; y-- {
+
+	// Iterate over the pixels in the specified direction
+	startY := bounds.Max.Y - 1
+	if direction == -1 {
+		startY = bounds.Min.Y
+	}
+	for y := startY; y >= bounds.Min.Y && y < bounds.Max.Y; y -= direction {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			// Get the color of the current pixel on the original layer
 			_, _, _, a := layer.At(x, y).RGBA()
-			_, _, _, aBelow := layer.At(x, y+1).RGBA()
-			_, _, _, aFlameBelow := flameLayer.At(x, y+1).RGBA()
+			_, _, _, aNeighbor := layer.At(x, y+direction).RGBA()
+			_, _, _, aEffectNeighbor := effectLayer.At(x, y+direction).RGBA()
 
 			// If the pixel is set on the original layer, we skip it since we don't want to cover it.
 			if a != 0 {
 				continue
 			}
 
-			// If the pixel below is set on the original layer, set the current pixel on the flame layer to the first color in the gradient
-			if aBelow != 0 {
-				flameLayer.Set(x, y, gradient[0])
-			} else if aFlameBelow != 0 {
+			// If the pixel above/below is set on the original layer, set the current pixel on the effect layer to the first color in the gradient
+			if aNeighbor != 0 {
+				effectLayer.Set(x, y, gradient[0])
+			} else if aEffectNeighbor != 0 {
 				// Check if at least two neighboring pixels are set on either layer.
 				// If not, skip the current pixel.
 				var numNeighbors int
@@ -154,21 +162,21 @@ func ApplyFlameEffect(layer image.Image, colorA, colorB color.Color) *image.RGBA
 						}
 
 						_, _, _, aLeft := layer.At(x+i, y+j).RGBA()
-						_, _, _, aFlameLeft := flameLayer.At(x+i, y+j).RGBA()
-						if aLeft != 0 || aFlameLeft != 0 {
+						_, _, _, aEffectLeft := effectLayer.At(x+i, y+j).RGBA()
+						if aLeft != 0 || aEffectLeft != 0 {
 							numNeighbors++
 						}
 					}
 				}
 
-				if (numNeighbors < 3 && rand.Float64() < 0.5) || rand.Float64() < 0.1 {
+				if (numNeighbors < minNeighbors && rand.Float64() < 0.5) || rand.Float64() < 0.2 {
 					continue
 				}
 
 				// Get the index of the current color in the gradient.
-				index := 0
+				var index int
 				for i, c := range gradient {
-					if c == flameLayer.At(x, y+1) {
+					if c == effectLayer.At(x, y+direction) {
 						index = i
 						break
 					}
@@ -176,13 +184,23 @@ func ApplyFlameEffect(layer image.Image, colorA, colorB color.Color) *image.RGBA
 
 				// Set the current pixel to the next color in the gradient
 				if index < numColors-1 {
-					flameLayer.Set(x, y, gradient[index+1])
+					effectLayer.Set(x, y, gradient[index+1])
 				}
 			}
 		}
 	}
 
-	return flameLayer
+	return effectLayer
+}
+
+// ApplyFlameEffect generates a flame effect for the given layer.
+func ApplyFlameEffect(layer image.Image, colorA, colorB color.Color) *image.RGBA {
+	return applyEffect(layer, colorA, colorB, 10, DirectionUp)
+}
+
+// ApplyDripEffect generates a drip effect for the given layer.
+func ApplyDripEffect(layer image.Image, colorA, colorB color.Color) *image.RGBA {
+	return applyEffect(layer, colorA, colorB, 15, DirectionDown)
 }
 
 // blendColors blends two colors with a given intensity (0.0 - 1.0).
