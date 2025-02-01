@@ -193,6 +193,123 @@ func applyEffect(layer image.Image, colorA, colorB color.Color, numColors int, d
 	return effectLayer
 }
 
+// ApplyGlowEffect generates a glow effect for the given layer.
+func ApplyGlowEffect(layer image.Image, colorA, colorB color.Color) *image.RGBA {
+	// We iterate over all pixels in the layer, and initially set all unset neighbors to the first color in the gradient
+	// if the current pixel is set on the original layer.
+	// Then we iterate over all pixels again, and set each unset neighbor to the next color in the gradient if at least two
+	// neighboring pixels are set on either layer with a different color.
+	// NOTE: This could be optimized quite a bit.
+
+	const minNeighbors = 3
+	const numColors = 3
+
+	bounds := layer.Bounds()
+	effectLayer := image.NewRGBA(bounds)
+
+	// Build a gradient index for all the colors we want to use.
+	gradient := make([]color.Color, numColors)
+	for i := 0; i < numColors; i++ {
+		percentage := float64(i) / float64(numColors-1)
+		gradient[i] = interpolateColor(colorA, colorB, percentage)
+	}
+
+	for colorIndex, c := range gradient {
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				// Get the color of the current pixel on the original layer
+				_, _, _, curPixelAlphaOrig := layer.At(x, y).RGBA()
+				// If we have colorIndex 0, we set all unset neighbors to the first color in the gradient
+				// if the current pixel is set on the original layer.
+				if colorIndex == 0 {
+					if curPixelAlphaOrig == 0 {
+						continue
+					}
+
+					// Iterate over all neighbors and set them to the first color in the gradient if they are unset
+					for i := -1; i <= 1; i++ {
+						if x+i < bounds.Min.X || x+i >= bounds.Max.X {
+							continue
+						}
+						for j := -1; j <= 1; j++ {
+							if y+j < bounds.Min.Y || y+j >= bounds.Max.Y {
+								continue
+							}
+
+							_, _, _, aNeighbor := layer.At(x+i, y+j).RGBA()
+							if aNeighbor != 0 {
+								continue
+							}
+							_, _, _, aEffectNeighbor := effectLayer.At(x+i, y+j).RGBA()
+							if aEffectNeighbor == 0 {
+								effectLayer.Set(x+i, y+j, gradient[0])
+							}
+						}
+					}
+				} else if curPixelAlphaOrig == 0 {
+					// If the pixel is set on the original layer, we skip it since we don't want to cover it.
+
+					// Make sure that the current pixel is set on the effect layer and
+					// is not the current color (since we want to progress the gradient,
+					// not stay on the same color).
+					_, _, _, aEffect := effectLayer.At(x, y).RGBA()
+					effectCol := effectLayer.At(x, y)
+					if aEffect == 0 || effectCol == c {
+						continue
+					}
+
+					// Check if at least two neighboring pixels are set on the effect layer
+					// and are not the current color.
+					var numNeighbors int
+					for i := -1; i <= 1; i++ {
+						if x+i < bounds.Min.X || x+i >= bounds.Max.X {
+							continue
+						}
+						for j := -1; j <= 1; j++ {
+							if y+j < bounds.Min.Y || y+j >= bounds.Max.Y {
+								continue
+							}
+
+							// Make sure that the neighbor is set on the effect layer and
+							// is not the current color.
+							_, _, _, aEffectLeft := effectLayer.At(x+i, y+j).RGBA()
+							effectLeft := effectLayer.At(x+i, y+j)
+							if aEffectLeft != 0 && effectLeft != c {
+								numNeighbors++
+							}
+						}
+					}
+
+					// If we don't have enough neighbors, we skip the current pixel.
+					if numNeighbors < minNeighbors || rand.Float64() < 0.1 {
+						continue
+					}
+
+					// Iterate over all neighbors and set them to the next color in the gradient if they are unset.
+					for i := -1; i <= 1; i++ {
+						if x+i < bounds.Min.X || x+i >= bounds.Max.X {
+							continue
+						}
+						for j := -1; j <= 1; j++ {
+							if y+j < bounds.Min.Y || y+j >= bounds.Max.Y {
+								continue
+							}
+
+							// Set the neighbor to the next color in the gradient if it is unset.
+							_, _, _, aEffectLeft := effectLayer.At(x+i, y+j).RGBA()
+							if aEffectLeft == 0 {
+								effectLayer.Set(x+i, y+j, c)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return effectLayer
+}
+
 // ApplyFlameEffect generates a flame effect for the given layer.
 func ApplyFlameEffect(layer image.Image, colorA, colorB color.Color) *image.RGBA {
 	return applyEffect(layer, colorA, colorB, 10, DirectionUp)
